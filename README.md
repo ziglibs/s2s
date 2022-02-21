@@ -11,6 +11,7 @@ A Zig binary serialization format and library.
 
 - All `comptime` only types
 - Unbound pointers (c pointers, pointer to many)
+- `volatile` pointers
 - Untagged or `external` unions
 - Opaque types
 - Function pointers
@@ -48,23 +49,6 @@ fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void;
 
 ## Project Status
 
-**THIS PROJECT IS UNFINISHED, DO NOT USE YET!**
+Most of the serialization/deserialization is implemented for the _trivial_ case.
 
-- [x] Implement frame data
-  - [x] Compute a hash/id out of the structure definitions (this is used as a safety measure to prevent accidental deserialization of invalid data)
-- [x] Implement serialization/deserialization
-  - [x] Struct
-  - [x] Tagged Union
-  - [x] Integers
-  - [x] Floats
-  - [x] Arrays
-  - [x] Slices (requires allocator)
-  - [x] Booleans
-  - [x] Optionals
-  - [x] Vectors
-  - [x] Enums
-  - [x] ErrorSet (must be embedded in another type due to Zig properties and semantics)
-  - [x] ErrorUnion (must be embedded in another type due to Zig properties and semantics)
-- [ ] Tests
-  - [x] Test pointer deserialization (requires extra code)
-  - [x] Error deserialization
+Pointers/slices with non-standard alignment aren't properly supported yet.

@@ -514,6 +514,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             }
         },
         .Pointer => |ptr| {
+            if (ptr.is_volatile) @compileError("Serializing volatile pointers is most likely a mistake.");
             if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
                 .One => {
@@ -644,9 +645,8 @@ test "type hasher basics" {
     testSameHash(usize, u64);
     testSameHash([]const u8, []const u8);
     testSameHash([]const u8, []u8);
-    testSameHash([]const volatile u8, []u8);
-    testSameHash([]const volatile u8, []const u8);
-    testSameHash(?*volatile struct { a: f32, b: u16 }, ?*const struct { hello: f32, lol: u16 });
+    testSameHash([]const u8, []u8);
+    testSameHash(?*struct { a: f32, b: u16 }, ?*const struct { hello: f32, lol: u16 });
     testSameHash(enum { a, b, c }, enum { a, b, c });
     testSameHash(enum(u8) { a, b, c }, enum(u8) { a, b, c });
     testSameHash(enum(u8) { a, b, c, _ }, enum(u8) { c, b, a, _ });
