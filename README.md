@@ -10,7 +10,7 @@ A Zig binary serialization format and library.
 **Unsupported types**:
 
 - All `comptime` only types
-- Unbound pointers
+- Unbound pointers (c pointers, pointer to many)
 - Untagged or `external` unions
 - Opaque types
 - Function pointers
@@ -30,14 +30,14 @@ fn serialize(stream: anytype, comptime T: type, value: T) StreamError!void;
 /// Deserializes a value of type `T` from the `stream`.
 /// - `stream` is a instance of `std.io.Reader`
 /// - `T` is the type to deserialize
-fn deserialize(stream: anytype, comptime T: type) (StreamError || error{UnexpectedData})!T;
+fn deserialize(stream: anytype, comptime T: type) (StreamError || error{UnexpectedData,EndOfStream})!T;
 
 /// Deserializes a value of type `T` from the `stream`.
 /// - `stream` is a instance of `std.io.Reader`
 /// - `T` is the type to deserialize
 /// - `allocator` is an allocator require to allocate slices and pointers.
 /// Result must be freed by using `free()`.
-fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (StreamError || error{ UnexpectedData, OutOfMemory })!T;
+fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (StreamError || error{ UnexpectedData, OutOfMemory,EndOfStream })!T;
 
 /// Releases all memory allocated by `deserializeAlloc`.
 /// - `allocator` is the allocator passed to `deserializeAlloc`.
@@ -50,18 +50,21 @@ fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void;
 
 **THIS PROJECT IS UNFINISHED, DO NOT USE YET!**
 
-- [ ] Implement frame data
-  - [ ] Compute a hash/id out of the structure definitions (this is used as a safety measure to prevent accidental deserialization of invalid data)
+- [x] Implement frame data
+  - [x] Compute a hash/id out of the structure definitions (this is used as a safety measure to prevent accidental deserialization of invalid data)
 - [ ] Implement serialization/deserialization
-  - [ ] Struct
-  - [ ] Tagged Union
-  - [ ] Integers (little, big, native endian)
-  - [ ] Floats (little, big, native enian)
-  - [ ] Arrays
-  - [ ] Slices (requires allocator)
-  - [ ] Booleans
-  - [ ] Optionals
-  - [ ] Vectors
-  - [ ] ErrorSet
-  - [ ] ErrorUnion
-  - [ ] Enums
+  - [x] Struct
+  - [x] Tagged Union
+  - [x] Integers
+  - [x] Floats
+  - [x] Arrays
+  - [x] Slices (requires allocator)
+  - [x] Booleans
+  - [x] Optionals
+  - [x] Vectors
+  - [x] Enums
+  - [ ] ErrorSet (errors have some weird semantics and will require a wrapper value)
+  - [ ] ErrorUnion (errors have some weird semantics and will require a wrapper value)
+- [ ] Tests
+  - [ ] Test pointer deserialization (requires extra code)
+  - [ ] Error deserialization

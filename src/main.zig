@@ -48,7 +48,6 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             }
         },
         .Array => |arr| {
-            try stream.writeIntLittle(u64, value.len);
             for (value) |item| {
                 try serializeRecursive(stream, arr.child, item);
             }
@@ -133,7 +132,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
 /// Deserializes a value of type `T` from the `stream`.
 /// - `stream` is a instance of `std.io.Reader`
 /// - `T` is the type to deserialize
-fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || error{UnexpectedData})!T {
+fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || error{ UnexpectedData, EndOfStream })!T {
     if (comptime requiresAllocationForDeserialize(T))
         @compileError(@typeName(T) ++ " requires allocation to be deserialized. Use deserializeAlloc instead of deserialize!");
     return deserializeInternal(stream, T, null) catch |err| switch (err) {
@@ -147,7 +146,7 @@ fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || erro
 /// - `T` is the type to deserialize
 /// - `allocator` is an allocator require to allocate slices and pointers.
 /// Result must be freed by using `free()`.
-fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory })!T {
+fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
     return try deserializeInternal(stream, T, allocator);
 }
 
@@ -161,15 +160,169 @@ fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void {
     _ = value;
 }
 
-fn deserializeInternal(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory })!T {
+fn deserializeInternal(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
     const type_hash = comptime computeTypeHash(T);
 
     var ref_hash: [type_hash.len]u8 = undefined;
-    try stream.readAll(&ref_hash);
+    try stream.readNoEof(&ref_hash);
     if (!std.mem.eql(u8, &type_hash, &ref_hash))
         return error.UnexpectedData;
 
-    _ = allocator;
+    var result: T = undefined;
+    try recursiveDeserialize(stream, T, allocator, &result);
+    return result;
+}
+
+fn readIntLittleAny(stream: anytype, comptime T: type) !T {
+    const BiggerInt = std.meta.Int(@typeInfo(T).Int.signedness, 8 * @as(usize, ((@bitSizeOf(T) + 7)) / 8));
+    return @truncate(T, try stream.readIntLittle(BiggerInt));
+}
+
+fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator, target: *T) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!void {
+    switch (@typeInfo(T)) {
+        // Primitive types:
+        .Void => target.* = {},
+        .Bool => target.* = (try stream.readByte()) != 0,
+        .Float => target.* = @bitCast(T, switch (T) {
+            f16 => try stream.readIntLittle(u16),
+            f32 => try stream.readIntLittle(u32),
+            f64 => try stream.readIntLittle(u64),
+            f80 => try stream.readIntLittle(u80),
+            f128 => try stream.readIntLittle(u128),
+            else => unreachable,
+        }),
+
+        .Int => target.* = if (T == usize)
+            std.math.cast(usize, try stream.readIntLittle(u64)) catch return error.UnexpectedData
+        else
+            try readIntLittleAny(stream, T),
+
+        .Pointer => |ptr| {
+            if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            switch (ptr.size) {
+                .One => {
+                    const pointer = try allocator.?.create(ptr.child);
+                    errdefer allocator.?.destroy(pointer);
+
+                    try recursiveDeserialize(stream, ptr.child, allocator, pointer);
+
+                    target.* = pointer;
+                },
+                .Slice => {
+                    const length = std.math.cast(usize, try stream.readIntLittle(u64)) catch return error.UnexpectedData;
+
+                    const slice = try allocator.?.alloc(ptr.child, length);
+                    errdefer allocator.?.free(slice);
+
+                    for (slice) |*item| {
+                        try recursiveDeserialize(stream, ptr.child, allocator, item);
+                    }
+
+                    target.* = slice;
+                },
+                .C => unreachable,
+                .Many => unreachable,
+            }
+        },
+        .Array => |arr| {
+            for (target.*) |*item| {
+                try recursiveDeserialize(stream, arr.child, allocator, item);
+            }
+        },
+        .Struct => |str| {
+            // we can safely ignore the struct layout here as we will serialize the data by field order,
+            // instead of memory representation
+
+            for (str.fields) |fld| {
+                try recursiveDeserialize(stream, fld.field_type, allocator, &@field(target.*, fld.name));
+            }
+        },
+        .Optional => |opt| {
+            const is_set = try stream.readIntLittle(u8);
+
+            if (is_set != 0) {
+                target.* = @as(opt.child, undefined);
+                try recursiveDeserialize(stream, opt.child, allocator, &target.*.?);
+            } else {
+                target.* = null;
+            }
+        },
+        .ErrorUnion => |eu| {
+            const is_value = try stream.readIntLittle(u8);
+            if (is_value != 0) {
+                target.* = @as(undefined, eu.payload);
+                if (target.*) |*good| {
+                    try recursiveDeserialize(stream, eu.payload, allocator, good);
+                } else {
+                    unreachable;
+                }
+            } else {
+                var err: eu.error_set = undefined;
+                try recursiveDeserialize(stream, eu.error_set, allocator, &err);
+                target.* = err;
+            }
+        },
+        .ErrorSet => {
+            // Error unions are serialized by "index of sorted name", so we
+            // hash all names in the right order
+            const names = getSortedErrorNames(T);
+            const index = try stream.readIntLittle(u16);
+
+            inline for (names) |name, i| {
+                if (i == index) {
+                    target.* = @field(T, name);
+                    return;
+                }
+            }
+            return error.UnexpectedData;
+        },
+        .Enum => |list| {
+            const Tag = if (list.tag_type == usize) u64 else list.tag_type;
+            const tag_value = try readIntLittleAny(stream, Tag);
+            if (list.is_exhaustive) {
+                target.* = std.meta.intToEnum(T, tag_value) catch return error.UnexpectedData;
+            } else {
+                target.* = @intToEnum(T, tag_value);
+            }
+        },
+        .Union => |un| {
+            const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
+
+            var active_tag: Tag = undefined;
+            try recursiveDeserialize(stream, Tag, allocator, &active_tag);
+
+            inline for (std.meta.fields(T)) |fld| {
+                if (@field(Tag, fld.name) == active_tag) {
+                    var union_value: fld.field_type = undefined;
+                    try recursiveDeserialize(stream, fld.field_type, allocator, &union_value);
+                    target.* = @unionInit(T, fld.name, union_value);
+                    return;
+                }
+            }
+
+            return error.UnexpectedData;
+        },
+        .Vector => |vec| {
+            var array: [vec.len]vec.child = undefined;
+            try recursiveDeserialize(stream, @TypeOf(array), allocator, &array);
+            target.* = array;
+        },
+
+        // Unsupported types:
+        .NoReturn,
+        .Type,
+        .ComptimeFloat,
+        .ComptimeInt,
+        .Undefined,
+        .Null,
+        .Fn,
+        .BoundFn,
+        .Opaque,
+        .Frame,
+        .AnyFrame,
+        .EnumLiteral,
+        => unreachable,
+    }
 }
 
 /// Returns `true` if `T` requires allocation to be deserialized.
@@ -423,6 +576,7 @@ test "serialize basics" {
 
     try testSerialize([3]u8, "hi!".*);
     try testSerialize([]const u8, "Hello, World!");
+    try testSerialize(*const [3]u8, "foo");
 
     try testSerialize(enum { a, b, c }, .a);
     try testSerialize(enum { a, b, c }, .b);
@@ -449,4 +603,66 @@ test "serialize basics" {
 
     try testSerialize(?u32, null);
     try testSerialize(?u32, 143);
+}
+
+fn testSerDesAlloc(comptime T: type, value: T) !void {
+    var data = std.ArrayList(u8).init(std.testing.allocator);
+    defer data.deinit();
+
+    try serialize(data.writer(), T, value);
+
+    var stream = std.io.fixedBufferStream(data.items);
+
+    var deserialized = try deserializeAlloc(stream.reader(), T, std.testing.allocator);
+    defer free(std.testing.allocator, T, deserialized);
+
+    try std.testing.expectEqual(value, deserialized);
+}
+
+test "ser/des" {
+    try testSerDesAlloc(void, {});
+    try testSerDesAlloc(bool, false);
+    try testSerDesAlloc(bool, true);
+    try testSerDesAlloc(u1, 0);
+    try testSerDesAlloc(u1, 1);
+    try testSerDesAlloc(u8, 0xFF);
+    try testSerDesAlloc(u32, 0xDEADBEEF);
+    try testSerDesAlloc(usize, 0xDEADBEEF);
+
+    try testSerDesAlloc(f16, std.math.pi);
+    try testSerDesAlloc(f32, std.math.pi);
+    try testSerDesAlloc(f64, std.math.pi);
+    try testSerDesAlloc(f80, std.math.pi);
+    try testSerDesAlloc(f128, std.math.pi);
+
+    try testSerDesAlloc([3]u8, "hi!".*);
+    // try testSerDesAlloc([]const u8, "Hello, World!");
+    // try testSerDesAlloc(*const [3]u8, "foo");
+
+    try testSerDesAlloc(enum { a, b, c }, .a);
+    try testSerDesAlloc(enum { a, b, c }, .b);
+    try testSerDesAlloc(enum { a, b, c }, .c);
+
+    try testSerDesAlloc(enum(u8) { a, b, c }, .a);
+    try testSerDesAlloc(enum(u8) { a, b, c }, .b);
+    try testSerDesAlloc(enum(u8) { a, b, c }, .c);
+
+    const TestEnum = enum(u8) { a, b, c, _ };
+    try testSerDesAlloc(TestEnum, .a);
+    try testSerDesAlloc(TestEnum, .b);
+    try testSerDesAlloc(TestEnum, .c);
+    try testSerDesAlloc(TestEnum, @intToEnum(TestEnum, 0xB1));
+
+    // TODO: How to properly deserialize these?
+    // try testSerDesAlloc(error{ Foo, Bar }, error.Foo);
+    // try testSerDesAlloc(error{ Bar, Foo }, error.Bar);
+
+    // try testSerDesAlloc(error{ Bar, Foo }!u32, error.Bar);
+    // try testSerDesAlloc(error{ Bar, Foo }!u32, 0xFF);
+
+    try testSerDesAlloc(union(enum) { a: f32, b: u32 }, .{ .a = 1.5 });
+    try testSerDesAlloc(union(enum) { a: f32, b: u32 }, .{ .b = 2.0 });
+
+    try testSerDesAlloc(?u32, null);
+    try testSerDesAlloc(?u32, 143);
 }
