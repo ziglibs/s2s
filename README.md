@@ -52,7 +52,7 @@ fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void;
 
 - [x] Implement frame data
   - [x] Compute a hash/id out of the structure definitions (this is used as a safety measure to prevent accidental deserialization of invalid data)
-- [ ] Implement serialization/deserialization
+- [x] Implement serialization/deserialization
   - [x] Struct
   - [x] Tagged Union
   - [x] Integers
@@ -63,8 +63,8 @@ fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void;
   - [x] Optionals
   - [x] Vectors
   - [x] Enums
-  - [ ] ErrorSet (errors have some weird semantics and will require a wrapper value)
-  - [ ] ErrorUnion (errors have some weird semantics and will require a wrapper value)
+  - [x] ErrorSet (must be embedded in another type due to Zig properties and semantics)
+  - [x] ErrorUnion (must be embedded in another type due to Zig properties and semantics)
 - [ ] Tests
-  - [ ] Test pointer deserialization (requires extra code)
-  - [ ] Error deserialization
+  - [x] Test pointer deserialization (requires extra code)
+  - [x] Error deserialization
