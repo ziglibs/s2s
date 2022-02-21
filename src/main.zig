@@ -109,6 +109,26 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
     }
 }
 
+fn getSortedEnumNames(comptime T: type) []const []const u8 {
+    comptime {
+        const type_info = @typeInfo(T).Enum;
+        if (type_info.layout != .Auto) @compileError("Only automatically tagged enums require sorting!");
+
+        var sorted_names: [type_info.fields.len][]const u8 = undefined;
+        for (type_info.fields) |err, i| {
+            sorted_names[i] = err.name;
+        }
+
+        std.sort.sort([]const u8, &sorted_names, {}, struct {
+            fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
+                _ = ctx;
+                return (std.mem.order(u8, lhs, rhs) == .lt);
+            }
+        }.order);
+        return &sorted_names;
+    }
+}
+
 fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
     switch (@typeInfo(T)) {
         // Primitive types:
@@ -169,18 +189,41 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             computeTypeHashInternal(hasher, eu.payload);
         },
         .ErrorSet => {
-            const names = getSortedErrorNames(T);
-
             // Error unions are serialized by "index of sorted name", so we
             // hash all names in the right order
+
             hasher.update("error set");
+            const names = getSortedErrorNames(T);
             for (names) |name| {
                 hasher.update(name);
             }
         },
         .Enum => |list| {
-            hasher.update("enum");
-            computeTypeHashInternal(hasher, list.tag_type);
+            const Tag = if (list.tag_type == usize) u64 else list.tag_type;
+            if (list.layout == .Auto) {
+                // Automatic enums are serialized by "index of sorted name", so we
+                // hash all names in the right order
+
+                hasher.update("enum.auto");
+                const names = getSortedEnumNames(T);
+                for (names) |name| {
+                    hasher.update(name);
+                }
+            } else if (list.is_exhaustive) {
+                // Exhaustive enums only allow certain values, so we
+                // tag them via the value type
+                hasher.update("enum.exhaustive");
+                computeTypeHashInternal(hasher, Tag);
+
+                const names = getSortedEnumNames(T);
+                for (names) |name| {
+                    hasher.update(&intToLittleEndianBytes(@as(Tag, @enumToInt(@field(T, name)))));
+                }
+            } else {
+                // Non-exhaustive enums are basically integers. Treat them as such.
+                hasher.update("enum.non-exhaustive");
+                computeTypeHashInternal(hasher, Tag);
+            }
         },
         .Union => |un| {
             const tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
@@ -234,10 +277,13 @@ test "type hasher basics" {
     testSameHash([]const volatile u8, []u8);
     testSameHash([]const volatile u8, []const u8);
     testSameHash(?*volatile struct { a: f32, b: u16 }, ?*const struct { hello: f32, lol: u16 });
-    testSameHash(enum { a, b, c }, enum { a, b, c });
+    testSameHash(enum { a, b, c }, enum { c, b, a });
+    testSameHash(enum(u8) { a, b, c }, enum(u8) { c, b, a });
+    testSameHash(enum(u8) { a, b, c, _ }, enum(u8) { c, b, a, _ });
+    testSameHash(enum(u8) { a = 1, b = 2, c = 3 }, enum(u8) { c = 1, b = 2, a = 3 });
     testSameHash([5]std.meta.Vector(4, u32), [5]std.meta.Vector(4, u32));
 
-    testSameHash(union(enum) { a: u32, b: f32 }, union(enum) { hendlo: u32, blafasel: f32 });
+    testSameHash(union(enum) { a: u32, b: f32 }, union(enum) { a: u32, b: f32 });
 
     testSameHash(error{ Foo, Bar }, error{ Foo, Bar });
     testSameHash(error{ Foo, Bar }, error{ Bar, Foo });
