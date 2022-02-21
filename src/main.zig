@@ -6,11 +6,128 @@ const testing = std.testing;
 /// - `T` is the type to serialize
 /// - `value` is the instance to serialize.
 fn serialize(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Error!void {
-    const type_hash = computeTypeHash(T);
+    const type_hash = comptime computeTypeHash(T);
 
     try stream.writeAll(&type_hash);
+    try serializeRecursive(stream, T, value);
+}
 
-    _ = value;
+fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Error!void {
+    switch (@typeInfo(T)) {
+        // Primitive types:
+        .Void => {}, // no data
+        .Bool => try stream.writeByte(@boolToInt(value)),
+        .Float => switch (T) {
+            f16 => try stream.writeIntLittle(u16, @bitCast(u16, value)),
+            f32 => try stream.writeIntLittle(u32, @bitCast(u32, value)),
+            f64 => try stream.writeIntLittle(u64, @bitCast(u64, value)),
+            f80 => try stream.writeIntLittle(u80, @bitCast(u80, value)),
+            f128 => try stream.writeIntLittle(u128, @bitCast(u128, value)),
+            else => unreachable,
+        },
+
+        .Int => {
+            if (T == usize) {
+                try stream.writeIntLittle(u64, value);
+            } else {
+                try stream.writeIntLittle(T, value);
+            }
+        },
+        .Pointer => |ptr| {
+            if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            switch (ptr.size) {
+                .One => try serializeRecursive(stream, ptr.child, value.*),
+                .Slice => {
+                    try stream.writeIntLittle(u64, value.len);
+                    for (value) |item| {
+                        try serializeRecursive(stream, ptr.child, item);
+                    }
+                },
+                .C => unreachable,
+                .Many => unreachable,
+            }
+        },
+        .Array => |arr| {
+            try stream.writeIntLittle(u64, value.len);
+            for (value) |item| {
+                try serializeRecursive(stream, arr.child, item);
+            }
+            if (arr.sentinel != null) @compileError("Sentinels are not supported yet!");
+        },
+        .Struct => |str| {
+            // we can safely ignore the struct layout here as we will serialize the data by field order,
+            // instead of memory representation
+
+            for (str.fields) |fld| {
+                try serializeRecursive(stream, fld.field_type, @field(value, fld.name));
+            }
+        },
+        .Optional => |opt| {
+            if (value) |item| {
+                try stream.writeIntLittle(u8, 1);
+                try serializeRecursive(stream, opt.child, item);
+            } else {
+                try stream.writeIntLittle(u8, 0);
+            }
+        },
+        .ErrorUnion => |eu| {
+            if (value) |item| {
+                try stream.writeIntLittle(u8, 1);
+                try serializeRecursive(stream, eu.payload, item);
+            } else |item| {
+                try stream.writeIntLittle(u8, 0);
+                try serializeRecursive(stream, eu.error_set, item);
+            }
+        },
+        .ErrorSet => {
+            // Error unions are serialized by "index of sorted name", so we
+            // hash all names in the right order
+            const names = getSortedErrorNames(T);
+
+            const index = for (names) |name, i| {
+                if (std.mem.eql(u8, name, @errorName(value)))
+                    break @intCast(u16, i);
+            } else unreachable;
+
+            try stream.writeIntLittle(u16, index);
+        },
+        .Enum => |list| {
+            const Tag = if (list.tag_type == usize) u64 else list.tag_type;
+            try stream.writeIntLittle(Tag, @enumToInt(value));
+        },
+        .Union => |un| {
+            const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
+
+            const active_tag = std.meta.activeTag(value);
+
+            try serializeRecursive(stream, Tag, active_tag);
+
+            inline for (std.meta.fields(T)) |fld| {
+                if (@field(Tag, fld.name) == active_tag) {
+                    try serializeRecursive(stream, fld.field_type, @field(value, fld.name));
+                }
+            }
+        },
+        .Vector => |vec| {
+            var array: [vec.len]vec.child = value;
+            try serializeRecursive(stream, @TypeOf(array), array);
+        },
+
+        // Unsupported types:
+        .NoReturn,
+        .Type,
+        .ComptimeFloat,
+        .ComptimeInt,
+        .Undefined,
+        .Null,
+        .Fn,
+        .BoundFn,
+        .Opaque,
+        .Frame,
+        .AnyFrame,
+        .EnumLiteral,
+        => unreachable,
+    }
 }
 
 /// Deserializes a value of type `T` from the `stream`.
@@ -45,7 +162,7 @@ fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void {
 }
 
 fn deserializeInternal(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory })!T {
-    const type_hash = computeTypeHash(T);
+    const type_hash = comptime computeTypeHash(T);
 
     var ref_hash: [type_hash.len]u8 = undefined;
     try stream.readAll(&ref_hash);
@@ -200,23 +317,14 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
         },
         .Enum => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
-            if (list.layout == .Auto) {
-                // Automatic enums are serialized by "index of sorted name", so we
-                // hash all names in the right order
-
-                hasher.update("enum.auto");
-                const names = getSortedEnumNames(T);
-                for (names) |name| {
-                    hasher.update(name);
-                }
-            } else if (list.is_exhaustive) {
+            if (list.is_exhaustive) {
                 // Exhaustive enums only allow certain values, so we
                 // tag them via the value type
                 hasher.update("enum.exhaustive");
                 computeTypeHashInternal(hasher, Tag);
-
                 const names = getSortedEnumNames(T);
-                for (names) |name| {
+                inline for (names) |name| {
+                    hasher.update(name);
                     hasher.update(&intToLittleEndianBytes(@as(Tag, @enumToInt(@field(T, name)))));
                 }
             } else {
@@ -277,10 +385,10 @@ test "type hasher basics" {
     testSameHash([]const volatile u8, []u8);
     testSameHash([]const volatile u8, []const u8);
     testSameHash(?*volatile struct { a: f32, b: u16 }, ?*const struct { hello: f32, lol: u16 });
-    testSameHash(enum { a, b, c }, enum { c, b, a });
-    testSameHash(enum(u8) { a, b, c }, enum(u8) { c, b, a });
+    testSameHash(enum { a, b, c }, enum { a, b, c });
+    testSameHash(enum(u8) { a, b, c }, enum(u8) { a, b, c });
     testSameHash(enum(u8) { a, b, c, _ }, enum(u8) { c, b, a, _ });
-    testSameHash(enum(u8) { a = 1, b = 2, c = 3 }, enum(u8) { c = 1, b = 2, a = 3 });
+    testSameHash(enum(u8) { a = 1, b = 6, c = 9 }, enum(u8) { a = 1, b = 6, c = 9 });
     testSameHash([5]std.meta.Vector(4, u32), [5]std.meta.Vector(4, u32));
 
     testSameHash(union(enum) { a: u32, b: f32 }, union(enum) { a: u32, b: f32 });
@@ -288,4 +396,57 @@ test "type hasher basics" {
     testSameHash(error{ Foo, Bar }, error{ Foo, Bar });
     testSameHash(error{ Foo, Bar }, error{ Bar, Foo });
     testSameHash(error{ Foo, Bar }!void, error{ Bar, Foo }!void);
+}
+
+fn testSerialize(comptime T: type, value: T) !void {
+    var data = std.ArrayList(u8).init(std.testing.allocator);
+    defer data.deinit();
+
+    try serialize(data.writer(), T, value);
+}
+
+test "serialize basics" {
+    try testSerialize(void, {});
+    try testSerialize(bool, false);
+    try testSerialize(bool, true);
+    try testSerialize(u1, 0);
+    try testSerialize(u1, 1);
+    try testSerialize(u8, 0xFF);
+    try testSerialize(u32, 0xDEADBEEF);
+    try testSerialize(usize, 0xDEADBEEF);
+
+    try testSerialize(f16, std.math.pi);
+    try testSerialize(f32, std.math.pi);
+    try testSerialize(f64, std.math.pi);
+    try testSerialize(f80, std.math.pi);
+    try testSerialize(f128, std.math.pi);
+
+    try testSerialize([3]u8, "hi!".*);
+    try testSerialize([]const u8, "Hello, World!");
+
+    try testSerialize(enum { a, b, c }, .a);
+    try testSerialize(enum { a, b, c }, .b);
+    try testSerialize(enum { a, b, c }, .c);
+
+    try testSerialize(enum(u8) { a, b, c }, .a);
+    try testSerialize(enum(u8) { a, b, c }, .b);
+    try testSerialize(enum(u8) { a, b, c }, .c);
+
+    const TestEnum = enum(u8) { a, b, c, _ };
+    try testSerialize(TestEnum, .a);
+    try testSerialize(TestEnum, .b);
+    try testSerialize(TestEnum, .c);
+    try testSerialize(TestEnum, @intToEnum(TestEnum, 0xB1));
+
+    try testSerialize(error{ Foo, Bar }, error.Foo);
+    try testSerialize(error{ Bar, Foo }, error.Bar);
+
+    try testSerialize(error{ Bar, Foo }!u32, error.Bar);
+    try testSerialize(error{ Bar, Foo }!u32, 0xFF);
+
+    try testSerialize(union(enum) { a: f32, b: u32 }, .{ .a = 1.5 });
+    try testSerialize(union(enum) { a: f32, b: u32 }, .{ .b = 2.0 });
+
+    try testSerialize(?u32, null);
+    try testSerialize(?u32, 143);
 }
