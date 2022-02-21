@@ -2,6 +2,8 @@
 
 A Zig binary serialization format and library.
 
+![Project logo](design/logo.png)
+
 ## Features
 
 - Convert (nearly) any Zig runtime datatype to binary data and back.
