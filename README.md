@@ -47,6 +47,20 @@ fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Alloca
 fn free(allocator: std.mem.Allocator, comptime T: type, value: T) void;
 ```
 
+## Usage and Development
+
+### Adding the library
+
+Just add the `s2s.zig` as a package to your Zig project. It has no external dependencies.
+
+### Running the test suite
+
+```sh-session
+[user@host s2s]$ zig test s2s.zig
+All 3 tests passed.
+[user@host s2s]$
+```
+
 ## Project Status
 
 Most of the serialization/deserialization is implemented for the _trivial_ case.
