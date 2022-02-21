@@ -8,7 +8,7 @@ const testing = std.testing;
 /// - `stream` is a instance of `std.io.Writer`
 /// - `T` is the type to serialize
 /// - `value` is the instance to serialize.
-fn serialize(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Error!void {
+pub fn serialize(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Error!void {
     comptime validateTopLevelType(T);
     const type_hash = comptime computeTypeHash(T);
 
@@ -19,7 +19,7 @@ fn serialize(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Error!
 /// Deserializes a value of type `T` from the `stream`.
 /// - `stream` is a instance of `std.io.Reader`
 /// - `T` is the type to deserialize
-fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || error{ UnexpectedData, EndOfStream })!T {
+pub fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || error{ UnexpectedData, EndOfStream })!T {
     comptime validateTopLevelType(T);
     if (comptime requiresAllocationForDeserialize(T))
         @compileError(@typeName(T) ++ " requires allocation to be deserialized. Use deserializeAlloc instead of deserialize!");
@@ -34,7 +34,7 @@ fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || erro
 /// - `T` is the type to deserialize
 /// - `allocator` is an allocator require to allocate slices and pointers.
 /// Result must be freed by using `free()`.
-fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
+pub fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
     comptime validateTopLevelType(T);
     return try deserializeInternal(stream, T, allocator);
 }
@@ -43,7 +43,7 @@ fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Alloca
 /// - `allocator` is the allocator passed to `deserializeAlloc`.
 /// - `T` is the type that was passed to `deserializeAlloc`.
 /// - `value` is the value that was returned by `deserializeAlloc`.
-fn free(allocator: std.mem.Allocator, comptime T: type, value: *T) void {
+pub fn free(allocator: std.mem.Allocator, comptime T: type, value: *T) void {
     recursiveFree(allocator, T, value);
 }
 
