@@ -567,7 +567,12 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             }
         },
         .Enum => |list| {
-            const Tag = if (list.tag_type == usize) u64 else list.tag_type;
+            const Tag = if (list.tag_type == usize)
+                u64
+            else if (list.tag_type == isize)
+                i64
+            else
+                list.tag_type;
             if (list.is_exhaustive) {
                 // Exhaustive enums only allow certain values, so we
                 // tag them via the value type
@@ -651,6 +656,8 @@ test "type hasher basics" {
     testSameHash(enum(u8) { a, b, c }, enum(u8) { a, b, c });
     testSameHash(enum(u8) { a, b, c, _ }, enum(u8) { c, b, a, _ });
     testSameHash(enum(u8) { a = 1, b = 6, c = 9 }, enum(u8) { a = 1, b = 6, c = 9 });
+    testSameHash(enum(usize) { a, b, c }, enum(u64) { a, b, c });
+    testSameHash(enum(isize) { a, b, c }, enum(i64) { a, b, c });
     testSameHash([5]std.meta.Vector(4, u32), [5]std.meta.Vector(4, u32));
 
     testSameHash(union(enum) { a: u32, b: f32 }, union(enum) { a: u32, b: f32 });
@@ -694,6 +701,14 @@ test "serialize basics" {
     try testSerialize(enum(u8) { a, b, c }, .a);
     try testSerialize(enum(u8) { a, b, c }, .b);
     try testSerialize(enum(u8) { a, b, c }, .c);
+
+    try testSerialize(enum(isize) { a, b, c }, .a);
+    try testSerialize(enum(isize) { a, b, c }, .b);
+    try testSerialize(enum(isize) { a, b, c }, .c);
+
+    try testSerialize(enum(usize) { a, b, c }, .a);
+    try testSerialize(enum(usize) { a, b, c }, .b);
+    try testSerialize(enum(usize) { a, b, c }, .c);
 
     const TestEnum = enum(u8) { a, b, c, _ };
     try testSerialize(TestEnum, .a);
@@ -783,6 +798,14 @@ test "ser/des" {
     try testSerDesAlloc(enum(u8) { a, b, c }, .a);
     try testSerDesAlloc(enum(u8) { a, b, c }, .b);
     try testSerDesAlloc(enum(u8) { a, b, c }, .c);
+
+    try testSerDesAlloc(enum(usize) { a, b, c }, .a);
+    try testSerDesAlloc(enum(usize) { a, b, c }, .b);
+    try testSerDesAlloc(enum(usize) { a, b, c }, .c);
+
+    try testSerDesAlloc(enum(isize) { a, b, c }, .a);
+    try testSerDesAlloc(enum(isize) { a, b, c }, .b);
+    try testSerDesAlloc(enum(isize) { a, b, c }, .c);
 
     const TestEnum = enum(u8) { a, b, c, _ };
     try testSerDesAlloc(TestEnum, .a);
