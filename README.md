@@ -7,6 +7,7 @@ A Zig binary serialization format and library.
 ## Features
 
 - Convert (nearly) any Zig runtime datatype to binary data and back.
+- Computes a stream signature that prevents deserialization of invalid data.
 - No support for graph like structures. Everything is considered to be tree data.
 
 **Unsupported types**:
