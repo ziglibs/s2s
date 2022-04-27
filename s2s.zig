@@ -425,11 +425,12 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
 /// Returns `true` if `T` requires allocation to be deserialized.
 fn requiresAllocationForDeserialize(comptime T: type) bool {
     switch (@typeInfo(T)) {
-        .Pointer => true,
+        .Pointer => return true,
         .Struct, .Union => {
             inline for (comptime std.meta.fields(T)) |fld| {
-                if (requiresAllocationForDeserialize(fld.field_type))
+                if (requiresAllocationForDeserialize(fld.field_type)) {
                     return true;
+                }
             }
             return false;
         },
