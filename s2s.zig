@@ -330,7 +330,12 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
 }
 
 fn makeMutableSlice(comptime T: type, slice: []const T) []T {
-    return @intToPtr([*]T, @ptrToInt(slice.ptr))[0..slice.len];
+    if (slice.len == 0) {
+        var buf: [0]T = .{};
+        return &buf;
+    } else {
+        return @intToPtr([*]T, @ptrToInt(slice.ptr))[0..slice.len];
+    }
 }
 
 fn makeMutablePtr(comptime T: type, ptr: *const T) *T {
