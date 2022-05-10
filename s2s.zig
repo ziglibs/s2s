@@ -503,6 +503,7 @@ fn getSortedEnumNames(comptime T: type) []const []const u8 {
 }
 
 fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
+    @setEvalBranchQuota(10_000);
     switch (@typeInfo(T)) {
         // Primitive types:
         .Void,
