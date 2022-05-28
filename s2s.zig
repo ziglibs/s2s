@@ -200,7 +200,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
         }),
 
         .Int => target.* = if (T == usize)
-            std.math.cast(usize, try stream.readIntLittle(u64)) catch return error.UnexpectedData
+            std.math.cast(usize, try stream.readIntLittle(u64)) orelse return error.UnexpectedData
         else
             try readIntLittleAny(stream, T),
 
@@ -216,7 +216,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
                     target.* = pointer;
                 },
                 .Slice => {
-                    const length = std.math.cast(usize, try stream.readIntLittle(u64)) catch return error.UnexpectedData;
+                    const length = std.math.cast(usize, try stream.readIntLittle(u64)) orelse return error.UnexpectedData;
 
                     const slice = try allocator.?.alloc(ptr.child, length);
                     errdefer allocator.?.free(slice);
