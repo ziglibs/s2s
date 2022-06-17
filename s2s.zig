@@ -77,8 +77,12 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
                 .One => try serializeRecursive(stream, ptr.child, value.*),
                 .Slice => {
                     try stream.writeIntLittle(u64, value.len);
-                    for (value) |item| {
-                        try serializeRecursive(stream, ptr.child, item);
+                    if (ptr.child == u8) {
+                        try stream.writeAll(value);
+                    } else {
+                        for (value) |item| {
+                            try serializeRecursive(stream, ptr.child, item);
+                        }
                     }
                 },
                 .C => unreachable,
@@ -86,8 +90,12 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             }
         },
         .Array => |arr| {
-            for (value) |item| {
-                try serializeRecursive(stream, arr.child, item);
+            if (arr.child == u8) {
+                try stream.writeAll(&value);
+            } else {
+                for (value) |item| {
+                    try serializeRecursive(stream, arr.child, item);
+                }
             }
             if (arr.sentinel != null) @compileError("Sentinels are not supported yet!");
         },
@@ -221,8 +229,12 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
                     const slice = try allocator.?.alloc(ptr.child, length);
                     errdefer allocator.?.free(slice);
 
-                    for (slice) |*item| {
-                        try recursiveDeserialize(stream, ptr.child, allocator, item);
+                    if (ptr.child == u8) {
+                        _ = try stream.readAll(slice);
+                    } else {
+                        for (slice) |*item| {
+                            try recursiveDeserialize(stream, ptr.child, allocator, item);
+                        }
                     }
 
                     target.* = slice;
@@ -232,8 +244,12 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             }
         },
         .Array => |arr| {
-            for (target.*) |*item| {
-                try recursiveDeserialize(stream, arr.child, allocator, item);
+            if (arr.child == u8) {
+                _ = try stream.readAll(target);
+            } else {
+                for (target.*) |*item| {
+                    try recursiveDeserialize(stream, arr.child, allocator, item);
+                }
             }
         },
         .Struct => |str| {
