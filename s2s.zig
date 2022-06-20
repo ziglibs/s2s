@@ -230,7 +230,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
                     errdefer allocator.?.free(slice);
 
                     if (ptr.child == u8) {
-                        _ = try stream.readAll(slice);
+                        try stream.readNoEof(slice);
                     } else {
                         for (slice) |*item| {
                             try recursiveDeserialize(stream, ptr.child, allocator, item);
@@ -245,7 +245,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
         },
         .Array => |arr| {
             if (arr.child == u8) {
-                _ = try stream.readAll(target);
+                try stream.readNoEof(target);
             } else {
                 for (target.*) |*item| {
                     try recursiveDeserialize(stream, arr.child, allocator, item);
