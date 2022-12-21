@@ -104,7 +104,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             // instead of memory representation
 
             inline for (str.fields) |fld| {
-                try serializeRecursive(stream, fld.field_type, @field(value, fld.name));
+                try serializeRecursive(stream, fld.type, @field(value, fld.name));
             }
         },
         .Optional => |opt| {
@@ -149,7 +149,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
 
             inline for (std.meta.fields(T)) |fld| {
                 if (@field(Tag, fld.name) == active_tag) {
-                    try serializeRecursive(stream, fld.field_type, @field(value, fld.name));
+                    try serializeRecursive(stream, fld.type, @field(value, fld.name));
                 }
             }
         },
@@ -256,7 +256,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             // instead of memory representation
 
             inline for (str.fields) |fld| {
-                try recursiveDeserialize(stream, fld.field_type, allocator, &@field(target.*, fld.name));
+                try recursiveDeserialize(stream, fld.type, allocator, &@field(target.*, fld.name));
             }
         },
         .Optional => |opt| {
@@ -312,8 +312,8 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
 
             inline for (std.meta.fields(T)) |fld| {
                 if (@field(Tag, fld.name) == active_tag) {
-                    var union_value: fld.field_type = undefined;
-                    try recursiveDeserialize(stream, fld.field_type, allocator, &union_value);
+                    var union_value: fld.type = undefined;
+                    try recursiveDeserialize(stream, fld.type, allocator, &union_value);
                     target.* = @unionInit(T, fld.name, union_value);
                     return;
                 }
@@ -390,7 +390,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
             // instead of memory representation
 
             inline for (str.fields) |fld| {
-                recursiveFree(allocator, fld.field_type, &@field(value.*, fld.name));
+                recursiveFree(allocator, fld.type, &@field(value.*, fld.name));
             }
         },
         .Optional => |opt| {
@@ -412,7 +412,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
 
             inline for (std.meta.fields(T)) |fld| {
                 if (@field(Tag, fld.name) == active_tag) {
-                    recursiveFree(allocator, fld.field_type, &@field(value.*, fld.name));
+                    recursiveFree(allocator, fld.type, &@field(value.*, fld.name));
                     return;
                 }
             }
@@ -446,7 +446,7 @@ fn requiresAllocationForDeserialize(comptime T: type) bool {
         .Pointer => return true,
         .Struct, .Union => {
             inline for (comptime std.meta.fields(T)) |fld| {
-                if (requiresAllocationForDeserialize(fld.field_type)) {
+                if (requiresAllocationForDeserialize(fld.type)) {
                     return true;
                 }
             }
@@ -498,7 +498,6 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
 fn getSortedEnumNames(comptime T: type) []const []const u8 {
     comptime {
         const type_info = @typeInfo(T).Enum;
-        if (type_info.layout != .Auto) @compileError("Only automatically tagged enums require sorting!");
 
         var sorted_names: [type_info.fields.len][]const u8 = undefined;
         for (type_info.fields) |err, i| {
@@ -564,7 +563,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
 
             for (str.fields) |fld| {
                 if (fld.is_comptime) @compileError("comptime fields are not supported.");
-                computeTypeHashInternal(hasher, fld.field_type);
+                computeTypeHashInternal(hasher, fld.type);
             }
         },
         .Optional => |opt| {
@@ -614,7 +613,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             hasher.update("union");
             computeTypeHashInternal(hasher, tag);
             for (un.fields) |fld| {
-                computeTypeHashInternal(hasher, fld.field_type);
+                computeTypeHashInternal(hasher, fld.type);
             }
         },
         .Vector => |vec| {
