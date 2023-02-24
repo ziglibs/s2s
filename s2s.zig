@@ -129,7 +129,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             // hash all names in the right order
             const names = getSortedErrorNames(T);
 
-            const index = for (names) |name, i| {
+            const index = for (names, 0..) |name, i| {
                 if (std.mem.eql(u8, name, @errorName(value)))
                     break @intCast(u16, i);
             } else unreachable;
@@ -287,7 +287,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             const names = comptime getSortedErrorNames(T);
             const index = try stream.readIntLittle(u16);
 
-            inline for (names) |name, i| {
+            inline for (names, 0..) |name, i| {
                 if (i == index) {
                     target.* = @field(T, name);
                     return;
@@ -481,7 +481,7 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
         const error_set = @typeInfo(T).ErrorSet orelse @compileError("Cannot serialize anyerror");
 
         var sorted_names: [error_set.len][]const u8 = undefined;
-        for (error_set) |err, i| {
+        for (error_set, 0..) |err, i| {
             sorted_names[i] = err.name;
         }
 
@@ -500,7 +500,7 @@ fn getSortedEnumNames(comptime T: type) []const []const u8 {
         const type_info = @typeInfo(T).Enum;
 
         var sorted_names: [type_info.fields.len][]const u8 = undefined;
-        for (type_info.fields) |err, i| {
+        for (type_info.fields, 0..) |err, i| {
             sorted_names[i] = err.name;
         }
 
