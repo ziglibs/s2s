@@ -381,7 +381,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
             }
         },
         .Array => |arr| {
-            for (value.*) |*item| {
+            for (value) |*item| {
                 recursiveFree(allocator, arr.child, item);
             }
         },
