@@ -481,18 +481,17 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
         const error_set = @typeInfo(T).ErrorSet orelse @compileError("Cannot serialize anyerror");
 
         var sorted_names: [error_set.len][]const u8 = undefined;
-        var sorted_names_slice = &sorted_names;
         for (error_set, 0..) |err, i| {
             sorted_names[i] = err.name;
         }
 
-        std.sort.sort([]const u8, sorted_names_slice, {}, struct {
+        std.sort.sort([]const u8,  &sorted_names, {}, struct {
             fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
                 _ = ctx;
                 return (std.mem.order(u8, lhs, rhs) == .lt);
             }
         }.order);
-        return sorted_names_slice;
+        return  &sorted_names;
     }
 }
 
