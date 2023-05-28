@@ -485,7 +485,7 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
             sorted_names[i] = err.name;
         }
 
-        std.sort.sort([]const u8,  &sorted_names, {}, struct {
+        std.mem.sort([]const u8,  &sorted_names, {}, struct {
             fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
                 _ = ctx;
                 return (std.mem.order(u8, lhs, rhs) == .lt);
@@ -504,7 +504,7 @@ fn getSortedEnumNames(comptime T: type) []const []const u8 {
             sorted_names[i] = err.name;
         }
 
-        std.sort.sort([]const u8, &sorted_names, {}, struct {
+        std.mem.sort([]const u8, &sorted_names, {}, struct {
             fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
                 _ = ctx;
                 return (std.mem.order(u8, lhs, rhs) == .lt);
