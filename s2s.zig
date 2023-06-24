@@ -54,7 +54,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
     switch (@typeInfo(T)) {
         // Primitive types:
         .Void => {}, // no data
-        .Bool => try stream.writeByte(@boolToInt(value)),
+        .Bool => try stream.writeByte(@intFromBool(value)),
         .Float => switch (T) {
             f16 => try stream.writeIntLittle(u16, @bitCast(u16, value)),
             f32 => try stream.writeIntLittle(u32, @bitCast(u32, value)),
@@ -138,7 +138,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         },
         .Enum => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
-            try stream.writeIntLittle(Tag, @enumToInt(value));
+            try stream.writeIntLittle(Tag, @intFromEnum(value));
         },
         .Union => |un| {
             const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
@@ -301,7 +301,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             if (list.is_exhaustive) {
                 target.* = std.meta.intToEnum(T, tag_value) catch return error.UnexpectedData;
             } else {
-                target.* = @intToEnum(T, tag_value);
+                target.* = @enumFromInt(T, tag_value);
             }
         },
         .Union => |un| {
@@ -348,12 +348,12 @@ fn makeMutableSlice(comptime T: type, slice: []const T) []T {
         var buf: [0]T = .{};
         return &buf;
     } else {
-        return @intToPtr([*]T, @ptrToInt(slice.ptr))[0..slice.len];
+        return @ptrFromInt([*]T, @intFromPtr(slice.ptr))[0..slice.len];
     }
 }
 
 fn makeMutablePtr(comptime T: type, ptr: *const T) *T {
-    return @intToPtr(*T, @ptrToInt(ptr));
+    return @ptrFromInt(*T, @intFromPtr(ptr));
 }
 
 fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void {
@@ -485,13 +485,13 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
             sorted_names[i] = err.name;
         }
 
-        std.mem.sort([]const u8,  &sorted_names, {}, struct {
+        std.mem.sort([]const u8, &sorted_names, {}, struct {
             fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
                 _ = ctx;
                 return (std.mem.order(u8, lhs, rhs) == .lt);
             }
         }.order);
-        return  &sorted_names;
+        return &sorted_names;
     }
 }
 
@@ -600,7 +600,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
                 const names = getSortedEnumNames(T);
                 inline for (names) |name| {
                     hasher.update(name);
-                    hasher.update(&intToLittleEndianBytes(@as(Tag, @enumToInt(@field(T, name)))));
+                    hasher.update(&intToLittleEndianBytes(@as(Tag, @intFromEnum(@field(T, name)))));
                 }
             } else {
                 // Non-exhaustive enums are basically integers. Treat them as such.
@@ -732,7 +732,7 @@ test "serialize basics" {
     try testSerialize(TestEnum, .a);
     try testSerialize(TestEnum, .b);
     try testSerialize(TestEnum, .c);
-    try testSerialize(TestEnum, @intToEnum(TestEnum, 0xB1));
+    try testSerialize(TestEnum, @enumFromInt(TestEnum, 0xB1));
 
     try testSerialize(struct { val: error{ Foo, Bar } }, .{ .val = error.Foo });
     try testSerialize(struct { val: error{ Bar, Foo } }, .{ .val = error.Bar });
@@ -829,7 +829,7 @@ test "ser/des" {
     try testSerDesAlloc(TestEnum, .a);
     try testSerDesAlloc(TestEnum, .b);
     try testSerDesAlloc(TestEnum, .c);
-    try testSerDesAlloc(TestEnum, @intToEnum(TestEnum, 0xB1));
+    try testSerDesAlloc(TestEnum, @enumFromInt(TestEnum, 0xB1));
 
     try testSerDesAlloc(struct { val: error{ Foo, Bar } }, .{ .val = error.Foo });
     try testSerDesAlloc(struct { val: error{ Bar, Foo } }, .{ .val = error.Bar });
