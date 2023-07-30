@@ -56,11 +56,11 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         .Void => {}, // no data
         .Bool => try stream.writeByte(@intFromBool(value)),
         .Float => switch (T) {
-            f16 => try stream.writeIntLittle(u16, @bitCast(u16, value)),
-            f32 => try stream.writeIntLittle(u32, @bitCast(u32, value)),
-            f64 => try stream.writeIntLittle(u64, @bitCast(u64, value)),
-            f80 => try stream.writeIntLittle(u80, @bitCast(u80, value)),
-            f128 => try stream.writeIntLittle(u128, @bitCast(u128, value)),
+            f16 => try stream.writeIntLittle(u16, @as(u16, @bitCast(value))),
+            f32 => try stream.writeIntLittle(u32, @as(u32, @bitCast(value))),
+            f64 => try stream.writeIntLittle(u64, @as(u64, @bitCast(value))),
+            f80 => try stream.writeIntLittle(u80, @as(u80, @bitCast(value))),
+            f128 => try stream.writeIntLittle(u128, @as(u128, @bitCast(value))),
             else => unreachable,
         },
 
@@ -131,7 +131,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
 
             const index = for (names, 0..) |name, i| {
                 if (std.mem.eql(u8, name, @errorName(value)))
-                    break @intCast(u16, i);
+                    break @as(u16, @intCast(i));
             } else unreachable;
 
             try stream.writeIntLittle(u16, index);
@@ -189,7 +189,7 @@ fn deserializeInternal(stream: anytype, comptime T: type, allocator: ?std.mem.Al
 
 fn readIntLittleAny(stream: anytype, comptime T: type) !T {
     const BiggerInt = std.meta.Int(@typeInfo(T).Int.signedness, 8 * @as(usize, ((@bitSizeOf(T) + 7)) / 8));
-    return @truncate(T, try stream.readIntLittle(BiggerInt));
+    return @as(T, @truncate(try stream.readIntLittle(BiggerInt)));
 }
 
 fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator, target: *T) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!void {
@@ -197,14 +197,14 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
         // Primitive types:
         .Void => target.* = {},
         .Bool => target.* = (try stream.readByte()) != 0,
-        .Float => target.* = @bitCast(T, switch (T) {
+        .Float => target.* = @as(T, @bitCast(switch (T) {
             f16 => try stream.readIntLittle(u16),
             f32 => try stream.readIntLittle(u32),
             f64 => try stream.readIntLittle(u64),
             f80 => try stream.readIntLittle(u80),
             f128 => try stream.readIntLittle(u128),
             else => unreachable,
-        }),
+        })),
 
         .Int => target.* = if (T == usize)
             std.math.cast(usize, try stream.readIntLittle(u64)) orelse return error.UnexpectedData
@@ -301,7 +301,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             if (list.is_exhaustive) {
                 target.* = std.meta.intToEnum(T, tag_value) catch return error.UnexpectedData;
             } else {
-                target.* = @enumFromInt(T, tag_value);
+                target.* = @as(T, @enumFromInt(tag_value));
             }
         },
         .Union => |un| {
@@ -348,12 +348,12 @@ fn makeMutableSlice(comptime T: type, slice: []const T) []T {
         var buf: [0]T = .{};
         return &buf;
     } else {
-        return @ptrFromInt([*]T, @intFromPtr(slice.ptr))[0..slice.len];
+        return @as([*]T, @ptrFromInt(@intFromPtr(slice.ptr)))[0..slice.len];
     }
 }
 
 fn makeMutablePtr(comptime T: type, ptr: *const T) *T {
-    return @ptrFromInt(*T, @intFromPtr(ptr));
+    return @as(*T, @ptrFromInt(@intFromPtr(ptr)));
 }
 
 fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void {
@@ -732,7 +732,7 @@ test "serialize basics" {
     try testSerialize(TestEnum, .a);
     try testSerialize(TestEnum, .b);
     try testSerialize(TestEnum, .c);
-    try testSerialize(TestEnum, @enumFromInt(TestEnum, 0xB1));
+    try testSerialize(TestEnum, @as(TestEnum, @enumFromInt(0xB1)));
 
     try testSerialize(struct { val: error{ Foo, Bar } }, .{ .val = error.Foo });
     try testSerialize(struct { val: error{ Bar, Foo } }, .{ .val = error.Bar });
@@ -829,7 +829,7 @@ test "ser/des" {
     try testSerDesAlloc(TestEnum, .a);
     try testSerDesAlloc(TestEnum, .b);
     try testSerDesAlloc(TestEnum, .c);
-    try testSerDesAlloc(TestEnum, @enumFromInt(TestEnum, 0xB1));
+    try testSerDesAlloc(TestEnum, @as(TestEnum, @enumFromInt(0xB1)));
 
     try testSerDesAlloc(struct { val: error{ Foo, Bar } }, .{ .val = error.Foo });
     try testSerDesAlloc(struct { val: error{ Bar, Foo } }, .{ .val = error.Bar });
