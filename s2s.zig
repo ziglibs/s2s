@@ -12,14 +12,17 @@ pub fn serialize(stream: anytype, comptime T: type, value: T) @TypeOf(stream).Er
     comptime validateTopLevelType(T);
     const type_hash = comptime computeTypeHash(T);
 
-    try stream.writeAll(&type_hash);
-    try serializeRecursive(stream, T, @as(T, value)); // use @as() to coerce to non-tuple type
+    try stream.writeAll(type_hash[0..]);
+    try serializeRecursive(stream, T, value);
 }
 
 /// Deserializes a value of type `T` from the `stream`.
 /// - `stream` is a instance of `std.io.Reader`
 /// - `T` is the type to deserialize
-pub fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || error{ UnexpectedData, EndOfStream })!T {
+pub fn deserialize(
+    stream: anytype,
+    comptime T: type,
+) (@TypeOf(stream).Error || error{ UnexpectedData, EndOfStream })!T {
     comptime validateTopLevelType(T);
     if (comptime requiresAllocationForDeserialize(T))
         @compileError(@typeName(T) ++ " requires allocation to be deserialized. Use deserializeAlloc instead of deserialize!");
@@ -34,7 +37,11 @@ pub fn deserialize(stream: anytype, comptime T: type) (@TypeOf(stream).Error || 
 /// - `T` is the type to deserialize
 /// - `allocator` is an allocator require to allocate slices and pointers.
 /// Result must be freed by using `free()`.
-pub fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
+pub fn deserializeAlloc(
+    stream: anytype,
+    comptime T: type,
+    allocator: std.mem.Allocator,
+) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
     comptime validateTopLevelType(T);
     return try deserializeInternal(stream, T, allocator);
 }
@@ -56,11 +63,11 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         .Void => {}, // no data
         .Bool => try stream.writeByte(@intFromBool(value)),
         .Float => switch (T) {
-            f16 => try stream.writeIntLittle(u16, @as(u16, @bitCast(value))),
-            f32 => try stream.writeIntLittle(u32, @as(u32, @bitCast(value))),
-            f64 => try stream.writeIntLittle(u64, @as(u64, @bitCast(value))),
-            f80 => try stream.writeIntLittle(u80, @as(u80, @bitCast(value))),
-            f128 => try stream.writeIntLittle(u128, @as(u128, @bitCast(value))),
+            f16 => try stream.writeIntLittle(u16, @bitCast(value)),
+            f32 => try stream.writeIntLittle(u32, @bitCast(value)),
+            f64 => try stream.writeIntLittle(u64, @bitCast(value)),
+            f80 => try stream.writeIntLittle(u80, @bitCast(value)),
+            f128 => try stream.writeIntLittle(u128, @bitCast(value)),
             else => unreachable,
         },
 
@@ -174,12 +181,16 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
     }
 }
 
-fn deserializeInternal(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
+fn deserializeInternal(
+    stream: anytype,
+    comptime T: type,
+    allocator: ?std.mem.Allocator,
+) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!T {
     const type_hash = comptime computeTypeHash(T);
 
     var ref_hash: [type_hash.len]u8 = undefined;
     try stream.readNoEof(&ref_hash);
-    if (!std.mem.eql(u8, &type_hash, &ref_hash))
+    if (!std.mem.eql(u8, type_hash[0..], ref_hash[0..]))
         return error.UnexpectedData;
 
     var result: T = undefined;
@@ -188,23 +199,28 @@ fn deserializeInternal(stream: anytype, comptime T: type, allocator: ?std.mem.Al
 }
 
 fn readIntLittleAny(stream: anytype, comptime T: type) !T {
-    const BiggerInt = std.meta.Int(@typeInfo(T).Int.signedness, 8 * @as(usize, ((@bitSizeOf(T) + 7)) / 8));
-    return @as(T, @truncate(try stream.readIntLittle(BiggerInt)));
+    const BiggerInt = std.meta.Int(@typeInfo(T).Int.signedness, 8 * @as(usize, (@bitSizeOf(T) + 7) / 8));
+    return @truncate(try stream.readIntLittle(BiggerInt));
 }
 
-fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.Allocator, target: *T) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!void {
+fn recursiveDeserialize(
+    stream: anytype,
+    comptime T: type,
+    allocator: ?std.mem.Allocator,
+    target: *T,
+) (@TypeOf(stream).Error || error{ UnexpectedData, OutOfMemory, EndOfStream })!void {
     switch (@typeInfo(T)) {
         // Primitive types:
         .Void => target.* = {},
         .Bool => target.* = (try stream.readByte()) != 0,
-        .Float => target.* = @as(T, @bitCast(switch (T) {
+        .Float => target.* = @bitCast(switch (T) {
             f16 => try stream.readIntLittle(u16),
             f32 => try stream.readIntLittle(u32),
             f64 => try stream.readIntLittle(u64),
             f80 => try stream.readIntLittle(u80),
             f128 => try stream.readIntLittle(u128),
             else => unreachable,
-        })),
+        }),
 
         .Int => target.* = if (T == usize)
             std.math.cast(usize, try stream.readIntLittle(u64)) orelse return error.UnexpectedData
@@ -246,7 +262,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             if (arr.child == u8) {
                 try stream.readNoEof(target);
             } else {
-                for (target.*) |*item| {
+                for (&target.*) |*item| {
                     try recursiveDeserialize(stream, arr.child, allocator, item);
                 }
             }
@@ -287,13 +303,10 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             const names = comptime getSortedErrorNames(T);
             const index = try stream.readIntLittle(u16);
 
-            inline for (names, 0..) |name, i| {
-                if (i == index) {
-                    target.* = @field(T, name);
-                    return;
-                }
+            switch (index) {
+                inline 0...names.len - 1 => |idx| target.* = @field(T, names[idx]),
+                else => return error.UnexpectedData,
             }
-            return error.UnexpectedData;
         },
         .Enum => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
@@ -301,7 +314,7 @@ fn recursiveDeserialize(stream: anytype, comptime T: type, allocator: ?std.mem.A
             if (list.is_exhaustive) {
                 target.* = std.meta.intToEnum(T, tag_value) catch return error.UnexpectedData;
             } else {
-                target.* = @as(T, @enumFromInt(tag_value));
+                target.* = @enumFromInt(tag_value);
             }
         },
         .Union => |un| {
@@ -348,12 +361,8 @@ fn makeMutableSlice(comptime T: type, slice: []const T) []T {
         var buf: [0]T = .{};
         return &buf;
     } else {
-        return @as([*]T, @ptrFromInt(@intFromPtr(slice.ptr)))[0..slice.len];
+        return @as([*]T, @constCast(slice.ptr))[0..slice.len];
     }
-}
-
-fn makeMutablePtr(comptime T: type, ptr: *const T) *T {
-    return @as(*T, @ptrFromInt(@intFromPtr(ptr)));
 }
 
 fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void {
@@ -365,7 +374,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
         .Pointer => |ptr| {
             switch (ptr.size) {
                 .One => {
-                    const mut_ptr = makeMutablePtr(ptr.child, value.*);
+                    const mut_ptr = @constCast(value.*);
                     recursiveFree(allocator, ptr.child, mut_ptr);
                     allocator.destroy(mut_ptr);
                 },
@@ -381,7 +390,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
             }
         },
         .Array => |arr| {
-            for (value) |*item| {
+            for (&value.*) |*item| {
                 recursiveFree(allocator, arr.child, item);
             }
         },
@@ -419,7 +428,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
         },
         .Vector => |vec| {
             var array: [vec.len]vec.child = value.*;
-            for (array) |*item| {
+            for (&array) |*item| {
                 recursiveFree(allocator, vec.child, item);
             }
         },
@@ -466,8 +475,8 @@ fn intToLittleEndianBytes(val: anytype) [@sizeOf(@TypeOf(val))]u8 {
 }
 
 /// Computes a unique type hash from `T` to identify deserializing invalid data.
-/// Incorporates field order and field type, but not field names, so only checks for structural equivalence.
-/// Compile errors on unsupported or comptime types.
+/// Incorporates field order and field type, but not field names, so only checks
+/// for structural equivalence. Compile errors on unsupported or comptime types.
 fn computeTypeHash(comptime T: type) [8]u8 {
     var hasher = TypeHashFn.init();
 
@@ -485,7 +494,7 @@ fn getSortedErrorNames(comptime T: type) []const []const u8 {
             sorted_names[i] = err.name;
         }
 
-        std.mem.sort([]const u8, &sorted_names, {}, struct {
+        std.mem.sortUnstable([]const u8, &sorted_names, {}, struct {
             fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
                 _ = ctx;
                 return (std.mem.order(u8, lhs, rhs) == .lt);
@@ -504,7 +513,7 @@ fn getSortedEnumNames(comptime T: type) []const []const u8 {
             sorted_names[i] = err.name;
         }
 
-        std.mem.sort([]const u8, &sorted_names, {}, struct {
+        std.mem.sortUnstable([]const u8, &sorted_names, {}, struct {
             fn order(ctx: void, lhs: []const u8, rhs: []const u8) bool {
                 _ = ctx;
                 return (std.mem.order(u8, lhs, rhs) == .lt);
@@ -549,9 +558,9 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             }
         },
         .Array => |arr| {
+            if (arr.sentinel != null) @compileError("Sentinels are not supported yet!");
             hasher.update(&intToLittleEndianBytes(@as(u64, arr.len)));
             computeTypeHashInternal(hasher, arr.child);
-            if (arr.sentinel != null) @compileError("Sentinels are not supported yet!");
         },
         .Struct => |str| {
             // we can safely ignore the struct layout here as we will serialize the data by field order,
@@ -653,7 +662,7 @@ fn validateTopLevelType(comptime T: type) void {
 fn testSameHash(comptime T1: type, comptime T2: type) void {
     const hash_1 = comptime computeTypeHash(T1);
     const hash_2 = comptime computeTypeHash(T2);
-    if (comptime !std.mem.eql(u8, &hash_1, &hash_2))
+    if (comptime !std.mem.eql(u8, hash_1[0..], hash_2[0..]))
         @compileError("The computed hash for " ++ @typeName(T1) ++ " and " ++ @typeName(T2) ++ " does not match.");
 }
 
@@ -664,7 +673,7 @@ test "type hasher basics" {
     testSameHash(u32, u32);
     testSameHash(f32, f32);
     testSameHash(f64, f64);
-    testSameHash(std.meta.Vector(4, u32), std.meta.Vector(4, u32));
+    testSameHash(@Vector(4, u32), @Vector(4, u32));
     testSameHash(usize, u64);
     testSameHash([]const u8, []const u8);
     testSameHash([]const u8, []u8);
@@ -676,7 +685,7 @@ test "type hasher basics" {
     testSameHash(enum(u8) { a = 1, b = 6, c = 9 }, enum(u8) { a = 1, b = 6, c = 9 });
     testSameHash(enum(usize) { a, b, c }, enum(u64) { a, b, c });
     testSameHash(enum(isize) { a, b, c }, enum(i64) { a, b, c });
-    testSameHash([5]std.meta.Vector(4, u32), [5]std.meta.Vector(4, u32));
+    testSameHash([5]@Vector(4, u32), [5]@Vector(4, u32));
 
     testSameHash(union(enum) { a: u32, b: f32 }, union(enum) { a: u32, b: f32 });
 
