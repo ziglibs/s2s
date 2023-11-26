@@ -63,19 +63,19 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         .Void => {}, // no data
         .Bool => try stream.writeByte(@intFromBool(value)),
         .Float => switch (T) {
-            f16 => try stream.writeIntLittle(u16, @bitCast(value)),
-            f32 => try stream.writeIntLittle(u32, @bitCast(value)),
-            f64 => try stream.writeIntLittle(u64, @bitCast(value)),
-            f80 => try stream.writeIntLittle(u80, @bitCast(value)),
-            f128 => try stream.writeIntLittle(u128, @bitCast(value)),
+            f16 => try stream.writeInt(u16, @bitCast(value), .little),
+            f32 => try stream.writeInt(u32, @bitCast(value), .little),
+            f64 => try stream.writeInt(u64, @bitCast(value), .little),
+            f80 => try stream.writeInt(u80, @bitCast(value), .little),
+            f128 => try stream.writeInt(u128, @bitCast(value), .little),
             else => unreachable,
         },
 
         .Int => {
             if (T == usize) {
-                try stream.writeIntLittle(u64, value);
+                try stream.writeInt(u64, value, .little);
             } else {
-                try stream.writeIntLittle(T, value);
+                try writeIntLittleAny(stream, T, value);
             }
         },
         .Pointer => |ptr| {
@@ -83,7 +83,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             switch (ptr.size) {
                 .One => try serializeRecursive(stream, ptr.child, value.*),
                 .Slice => {
-                    try stream.writeIntLittle(u64, value.len);
+                    try stream.writeInt(u64, value.len, .little);
                     if (ptr.child == u8) {
                         try stream.writeAll(value);
                     } else {
@@ -116,18 +116,18 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         },
         .Optional => |opt| {
             if (value) |item| {
-                try stream.writeIntLittle(u8, 1);
+                try stream.writeInt(u8, 1, .little);
                 try serializeRecursive(stream, opt.child, item);
             } else {
-                try stream.writeIntLittle(u8, 0);
+                try stream.writeInt(u8, 0, .little);
             }
         },
         .ErrorUnion => |eu| {
             if (value) |item| {
-                try stream.writeIntLittle(u8, 1);
+                try stream.writeInt(u8, 1, .little);
                 try serializeRecursive(stream, eu.payload, item);
             } else |item| {
-                try stream.writeIntLittle(u8, 0);
+                try stream.writeInt(u8, 0, .little);
                 try serializeRecursive(stream, eu.error_set, item);
             }
         },
@@ -141,11 +141,11 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
                     break @as(u16, @intCast(i));
             } else unreachable;
 
-            try stream.writeIntLittle(u16, index);
+            try stream.writeInt(u16, index, .little);
         },
         .Enum => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
-            try stream.writeIntLittle(Tag, @intFromEnum(value));
+            try writeIntLittleAny(stream, Tag, @intFromEnum(value));
         },
         .Union => |un| {
             const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
@@ -161,7 +161,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             }
         },
         .Vector => |vec| {
-            var array: [vec.len]vec.child = value;
+            const array: [vec.len]vec.child = value;
             try serializeRecursive(stream, @TypeOf(array), array);
         },
 
@@ -198,9 +198,21 @@ fn deserializeInternal(
     return result;
 }
 
+///Determines the size of the next larger integer type that can accommodate the same range of values as `T`
+fn BiggerInt(comptime T: type) type {
+    const next_integer_bit_offset = 7;
+    const byte_size = 8;
+    const next_integer_number_of_bytes: usize = @intFromFloat((@bitSizeOf(T) + next_integer_bit_offset) / byte_size);
+    const bit_count = byte_size * next_integer_number_of_bytes;
+    return std.meta.Int(@typeInfo(T).Int.signedness, bit_count);
+}
+
 fn readIntLittleAny(stream: anytype, comptime T: type) !T {
-    const BiggerInt = std.meta.Int(@typeInfo(T).Int.signedness, 8 * @as(usize, (@bitSizeOf(T) + 7) / 8));
-    return @truncate(try stream.readIntLittle(BiggerInt));
+    return @truncate(try stream.readInt(BiggerInt(T), .little));
+}
+
+fn writeIntLittleAny(stream: anytype, comptime T: type, value: T) !void {
+    try stream.writeInt(BiggerInt(T), value, .little);
 }
 
 fn recursiveDeserialize(
@@ -214,16 +226,16 @@ fn recursiveDeserialize(
         .Void => target.* = {},
         .Bool => target.* = (try stream.readByte()) != 0,
         .Float => target.* = @bitCast(switch (T) {
-            f16 => try stream.readIntLittle(u16),
-            f32 => try stream.readIntLittle(u32),
-            f64 => try stream.readIntLittle(u64),
-            f80 => try stream.readIntLittle(u80),
-            f128 => try stream.readIntLittle(u128),
+            f16 => try stream.readInt(u16, .little),
+            f32 => try stream.readInt(u32, .little),
+            f64 => try stream.readInt(u64, .little),
+            f80 => try stream.readInt(u80, .little),
+            f128 => try stream.readInt(u128, .little),
             else => unreachable,
         }),
 
         .Int => target.* = if (T == usize)
-            std.math.cast(usize, try stream.readIntLittle(u64)) orelse return error.UnexpectedData
+            std.math.cast(usize, try stream.readInt(u64, .little)) orelse return error.UnexpectedData
         else
             try readIntLittleAny(stream, T),
 
@@ -239,7 +251,7 @@ fn recursiveDeserialize(
                     target.* = pointer;
                 },
                 .Slice => {
-                    const length = std.math.cast(usize, try stream.readIntLittle(u64)) orelse return error.UnexpectedData;
+                    const length = std.math.cast(usize, try stream.readInt(u64, .little)) orelse return error.UnexpectedData;
 
                     const slice = try allocator.?.alloc(ptr.child, length);
                     errdefer allocator.?.free(slice);
@@ -276,7 +288,7 @@ fn recursiveDeserialize(
             }
         },
         .Optional => |opt| {
-            const is_set = try stream.readIntLittle(u8);
+            const is_set = try stream.readInt(u8, .little);
 
             if (is_set != 0) {
                 target.* = @as(opt.child, undefined);
@@ -286,7 +298,7 @@ fn recursiveDeserialize(
             }
         },
         .ErrorUnion => |eu| {
-            const is_value = try stream.readIntLittle(u8);
+            const is_value = try stream.readInt(u8, .little);
             if (is_value != 0) {
                 var value: eu.payload = undefined;
                 try recursiveDeserialize(stream, eu.payload, allocator, &value);
@@ -301,7 +313,7 @@ fn recursiveDeserialize(
             // Error unions are serialized by "index of sorted name", so we
             // hash all names in the right order
             const names = comptime getSortedErrorNames(T);
-            const index = try stream.readIntLittle(u16);
+            const index = try stream.readInt(u16, .little);
 
             switch (index) {
                 inline 0...names.len - 1 => |idx| target.* = @field(T, names[idx]),
@@ -417,7 +429,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
         .Union => |un| {
             const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
 
-            var active_tag: Tag = value.*;
+            const active_tag: Tag = value.*;
 
             inline for (std.meta.fields(T)) |fld| {
                 if (@field(Tag, fld.name) == active_tag) {
@@ -470,7 +482,14 @@ const TypeHashFn = std.hash.Fnv1a_64;
 
 fn intToLittleEndianBytes(val: anytype) [@sizeOf(@TypeOf(val))]u8 {
     var res: [@sizeOf(@TypeOf(val))]u8 = undefined;
-    std.mem.writeIntLittle(@TypeOf(val), &res, val);
+    std.mem.writeInt(@TypeOf(val), &res, val, .little);
+    return res;
+}
+
+fn enumToLittleEndianBytes(val: anytype) [@sizeOf(@TypeOf(val))]u8 {
+    const T = @TypeOf(val);
+    var res: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeInt(BiggerInt(T), &res, val, .little);
     return res;
 }
 
@@ -609,7 +628,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
                 const names = getSortedEnumNames(T);
                 inline for (names) |name| {
                     hasher.update(name);
-                    hasher.update(&intToLittleEndianBytes(@as(Tag, @intFromEnum(@field(T, name)))));
+                    hasher.update(&enumToLittleEndianBytes(@as(Tag, @intFromEnum(@field(T, name)))));
                 }
             } else {
                 // Non-exhaustive enums are basically integers. Treat them as such.
@@ -666,8 +685,6 @@ fn testSameHash(comptime T1: type, comptime T2: type) void {
         @compileError("The computed hash for " ++ @typeName(T1) ++ " and " ++ @typeName(T2) ++ " does not match.");
 }
 
-const enable_failing_test = false;
-
 test "type hasher basics" {
     testSameHash(void, void);
     testSameHash(bool, bool);
@@ -684,10 +701,8 @@ test "type hasher basics" {
     testSameHash(enum { a, b, c }, enum { a, b, c });
     testSameHash(enum(u8) { a, b, c, _ }, enum(u8) { c, b, a, _ });
 
-    if (enable_failing_test) {
-        testSameHash(enum(u8) { a, b, c }, enum(u8) { a, b, c });
-        testSameHash(enum(u8) { a = 1, b = 6, c = 9 }, enum(u8) { a = 1, b = 6, c = 9 });
-    }
+    testSameHash(enum(u8) { a, b, c }, enum(u8) { a, b, c });
+    testSameHash(enum(u8) { a = 1, b = 6, c = 9 }, enum(u8) { a = 1, b = 6, c = 9 });
 
     testSameHash(enum(usize) { a, b, c }, enum(u64) { a, b, c });
     testSameHash(enum(isize) { a, b, c }, enum(i64) { a, b, c });
@@ -731,11 +746,9 @@ test "serialize basics" {
     try testSerialize(enum { a, b, c }, .b);
     try testSerialize(enum { a, b, c }, .c);
 
-    if (enable_failing_test) {
-        try testSerialize(enum(u8) { a, b, c }, .a);
-        try testSerialize(enum(u8) { a, b, c }, .b);
-        try testSerialize(enum(u8) { a, b, c }, .c);
-    }
+    try testSerialize(enum(u8) { a, b, c }, .a);
+    try testSerialize(enum(u8) { a, b, c }, .b);
+    try testSerialize(enum(u8) { a, b, c }, .c);
 
     try testSerialize(enum(isize) { a, b, c }, .a);
     try testSerialize(enum(isize) { a, b, c }, .b);
@@ -830,11 +843,9 @@ test "ser/des" {
     try testSerDesAlloc(enum { a, b, c }, .b);
     try testSerDesAlloc(enum { a, b, c }, .c);
 
-    if (enable_failing_test) {
-        try testSerDesAlloc(enum(u8) { a, b, c }, .a);
-        try testSerDesAlloc(enum(u8) { a, b, c }, .b);
-        try testSerDesAlloc(enum(u8) { a, b, c }, .c);
-    }
+    try testSerDesAlloc(enum(u8) { a, b, c }, .a);
+    try testSerDesAlloc(enum(u8) { a, b, c }, .b);
+    try testSerDesAlloc(enum(u8) { a, b, c }, .c);
 
     try testSerDesAlloc(enum(usize) { a, b, c }, .a);
     try testSerDesAlloc(enum(usize) { a, b, c }, .b);
