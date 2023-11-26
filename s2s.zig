@@ -75,7 +75,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             if (T == usize) {
                 try stream.writeInt(u64, value, .little);
             } else {
-                try writeIntLittleAny(stream, T, value);
+                try stream.writeInt(AlignedInt(T), value, .little);
             }
         },
         .Pointer => |ptr| {
@@ -145,7 +145,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         },
         .Enum => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
-            try writeIntLittleAny(stream, Tag, @intFromEnum(value));
+            try stream.writeInt(AlignedInt(Tag), @intFromEnum(value), .little);
         },
         .Union => |un| {
             const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
@@ -198,21 +198,9 @@ fn deserializeInternal(
     return result;
 }
 
-///Determines the size of the next larger integer type that can accommodate the same range of values as `T`
-fn BiggerInt(comptime T: type) type {
-    const next_integer_bit_offset = 7;
-    const byte_size = 8;
-    const next_integer_number_of_bytes: usize = @intFromFloat((@bitSizeOf(T) + next_integer_bit_offset) / byte_size);
-    const bit_count = byte_size * next_integer_number_of_bytes;
-    return std.meta.Int(@typeInfo(T).Int.signedness, bit_count);
-}
-
-fn readIntLittleAny(stream: anytype, comptime T: type) !T {
-    return @truncate(try stream.readInt(BiggerInt(T), .little));
-}
-
-fn writeIntLittleAny(stream: anytype, comptime T: type, value: T) !void {
-    try stream.writeInt(BiggerInt(T), value, .little);
+///Determines the size of the next byte aligned integer type that can accommodate the same range of values as `T`
+fn AlignedInt(comptime T: type) type {
+    return std.math.ByteAlignedInt(T);
 }
 
 fn recursiveDeserialize(
@@ -237,7 +225,7 @@ fn recursiveDeserialize(
         .Int => target.* = if (T == usize)
             std.math.cast(usize, try stream.readInt(u64, .little)) orelse return error.UnexpectedData
         else
-            try readIntLittleAny(stream, T),
+            @truncate(try stream.readInt(AlignedInt(T), .little)),
 
         .Pointer => |ptr| {
             if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
@@ -322,7 +310,7 @@ fn recursiveDeserialize(
         },
         .Enum => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
-            const tag_value = try readIntLittleAny(stream, Tag);
+            const tag_value: Tag = @truncate(try stream.readInt(AlignedInt(Tag), .little));
             if (list.is_exhaustive) {
                 target.* = std.meta.intToEnum(T, tag_value) catch return error.UnexpectedData;
             } else {
@@ -481,15 +469,9 @@ fn requiresAllocationForDeserialize(comptime T: type) bool {
 const TypeHashFn = std.hash.Fnv1a_64;
 
 fn intToLittleEndianBytes(val: anytype) [@sizeOf(@TypeOf(val))]u8 {
-    var res: [@sizeOf(@TypeOf(val))]u8 = undefined;
-    std.mem.writeInt(@TypeOf(val), &res, val, .little);
-    return res;
-}
-
-fn enumToLittleEndianBytes(val: anytype) [@sizeOf(@TypeOf(val))]u8 {
     const T = @TypeOf(val);
     var res: [@sizeOf(T)]u8 = undefined;
-    std.mem.writeInt(BiggerInt(T), &res, val, .little);
+    std.mem.writeInt(AlignedInt(T), &res, val, .little);
     return res;
 }
 
@@ -628,7 +610,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
                 const names = getSortedEnumNames(T);
                 inline for (names) |name| {
                     hasher.update(name);
-                    hasher.update(&enumToLittleEndianBytes(@as(Tag, @intFromEnum(@field(T, name)))));
+                    hasher.update(&intToLittleEndianBytes(@as(Tag, @intFromEnum(@field(T, name)))));
                 }
             } else {
                 // Non-exhaustive enums are basically integers. Treat them as such.
