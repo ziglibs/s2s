@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
 
     _ = b.addModule("s2s", .{
-        .source_file = .{ .path = "s2s.zig" },
+        .root_source_file = .{ .path = "s2s.zig" },
     });
 
     const tests = b.addTest(.{
