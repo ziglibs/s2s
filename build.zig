@@ -5,11 +5,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
 
     _ = b.addModule("s2s", .{
-        .root_source_file = .{ .path = "s2s.zig" },
+        .root_source_file = b.path("s2s.zig"),
     });
 
     const tests = b.addTest(.{
-        .root_source_file = .{ .path = "s2s.zig" },
+        .root_source_file = b.path("s2s.zig"),
         .target = target,
         .optimize = optimize,
     });
