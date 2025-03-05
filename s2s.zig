@@ -79,7 +79,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
             }
         },
         .pointer => |ptr| {
-            if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
                 .One => try serializeRecursive(stream, ptr.child, value.*),
                 .Slice => {
@@ -104,7 +104,7 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
                     try serializeRecursive(stream, arr.child, item);
                 }
             }
-            if (arr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            if (arr.sentinel() != null) @compileError("Sentinels are not supported yet!");
         },
         .@"struct" => |str| {
             // we can safely ignore the struct layout here as we will serialize the data by field order,
@@ -228,7 +228,7 @@ fn recursiveDeserialize(
             @truncate(try stream.readInt(AlignedInt(T), .little)),
 
         .pointer => |ptr| {
-            if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
                 .One => {
                     const pointer = try allocator.?.create(ptr.child);
@@ -544,7 +544,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
         },
         .pointer => |ptr| {
             if (ptr.is_volatile) @compileError("Serializing volatile pointers is most likely a mistake.");
-            if (ptr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
                 .One => {
                     hasher.update("pointer");
@@ -559,7 +559,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             }
         },
         .array => |arr| {
-            if (arr.sentinel != null) @compileError("Sentinels are not supported yet!");
+            if (arr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             hasher.update(&intToLittleEndianBytes(@as(u64, arr.len)));
             computeTypeHashInternal(hasher, arr.child);
         },
