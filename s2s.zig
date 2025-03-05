@@ -81,8 +81,8 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
         .pointer => |ptr| {
             if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
-                .One => try serializeRecursive(stream, ptr.child, value.*),
-                .Slice => {
+                .one => try serializeRecursive(stream, ptr.child, value.*),
+                .slice => {
                     try stream.writeInt(u64, value.len, .little);
                     if (ptr.child == u8) {
                         try stream.writeAll(value);
@@ -92,8 +92,8 @@ fn serializeRecursive(stream: anytype, comptime T: type, value: T) @TypeOf(strea
                         }
                     }
                 },
-                .C => unreachable,
-                .Many => unreachable,
+                .c => unreachable,
+                .many => unreachable,
             }
         },
         .array => |arr| {
@@ -230,7 +230,7 @@ fn recursiveDeserialize(
         .pointer => |ptr| {
             if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
-                .One => {
+                .one => {
                     const pointer = try allocator.?.create(ptr.child);
                     errdefer allocator.?.destroy(pointer);
 
@@ -238,7 +238,7 @@ fn recursiveDeserialize(
 
                     target.* = pointer;
                 },
-                .Slice => {
+                .slice => {
                     const length = std.math.cast(usize, try stream.readInt(u64, .little)) orelse return error.UnexpectedData;
 
                     const slice = try allocator.?.alloc(ptr.child, length);
@@ -254,8 +254,8 @@ fn recursiveDeserialize(
 
                     target.* = slice;
                 },
-                .C => unreachable,
-                .Many => unreachable,
+                .c => unreachable,
+                .many => unreachable,
             }
         },
         .array => |arr| {
@@ -546,16 +546,16 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             if (ptr.is_volatile) @compileError("Serializing volatile pointers is most likely a mistake.");
             if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
-                .One => {
+                .one => {
                     hasher.update("pointer");
                     computeTypeHashInternal(hasher, ptr.child);
                 },
-                .Slice => {
+                .slice => {
                     hasher.update("slice");
                     computeTypeHashInternal(hasher, ptr.child);
                 },
-                .C => @compileError("C-pointers are not supported"),
-                .Many => @compileError("Many-pointers are not supported"),
+                .c => @compileError("C-pointers are not supported"),
+                .many => @compileError("Many-pointers are not supported"),
             }
         },
         .array => |arr| {
