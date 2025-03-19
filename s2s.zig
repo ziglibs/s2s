@@ -373,20 +373,20 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
         // Composite types:
         .pointer => |ptr| {
             switch (ptr.size) {
-                .One => {
+                .one => {
                     const mut_ptr = @constCast(value.*);
                     recursiveFree(allocator, ptr.child, mut_ptr);
                     allocator.destroy(mut_ptr);
                 },
-                .Slice => {
+                .slice => {
                     const mut_slice = makeMutableSlice(ptr.child, value.*);
                     for (mut_slice) |*item| {
                         recursiveFree(allocator, ptr.child, item);
                     }
                     allocator.free(mut_slice);
                 },
-                .C => unreachable,
-                .Many => unreachable,
+                .c => unreachable,
+                .many => unreachable,
             }
         },
         .array => |arr| {
