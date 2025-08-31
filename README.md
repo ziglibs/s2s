@@ -26,22 +26,22 @@ The library itself provides only some APIs, as most of the serialization process
 
 ```zig
 /// Serializes the given `value: T` into the `stream`.
-/// - `stream` is a instance of `std.io.Writer`
+/// - `stream` is a instance of `std.Io.Writer`
 /// - `T` is the type to serialize
 /// - `value` is the instance to serialize.
-fn serialize(stream: anytype, comptime T: type, value: T) StreamError!void;
+fn serialize(stream: *std.Io.Writer, comptime T: type, value: T) std.Io.Writer.Error!void;
 
 /// Deserializes a value of type `T` from the `stream`.
-/// - `stream` is a instance of `std.io.Reader`
+/// - `stream` is a instance of `std.Io.Reader`
 /// - `T` is the type to deserialize
-fn deserialize(stream: anytype, comptime T: type) (StreamError || error{UnexpectedData,EndOfStream})!T;
+fn deserialize(stream: *std.Io.Reader, comptime T: type) (std.Io.Reader.Error || error{UnexpectedData,EndOfStream})!T;
 
 /// Deserializes a value of type `T` from the `stream`.
-/// - `stream` is a instance of `std.io.Reader`
+/// - `stream` is a instance of `std.Io.Reader`
 /// - `T` is the type to deserialize
 /// - `allocator` is an allocator require to allocate slices and pointers.
 /// Result must be freed by using `free()`.
-fn deserializeAlloc(stream: anytype, comptime T: type, allocator: std.mem.Allocator) (StreamError || error{ UnexpectedData, OutOfMemory,EndOfStream })!T;
+fn deserializeAlloc(stream: *std.Io.Reader, comptime T: type, allocator: std.mem.Allocator) (std.Io.Reader.Error || error{ UnexpectedData, OutOfMemory,EndOfStream })!T;
 
 /// Releases all memory allocated by `deserializeAlloc`.
 /// - `allocator` is the allocator passed to `deserializeAlloc`.
