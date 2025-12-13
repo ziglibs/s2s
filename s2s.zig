@@ -359,8 +359,7 @@ fn recursiveDeserialize(
 
 fn makeMutableSlice(comptime T: type, slice: []const T) []T {
     if (slice.len == 0) {
-        var buf: [0]T = .{};
-        return &buf;
+        return &[_]T{};
     } else {
         return @as([*]T, @constCast(slice.ptr))[0..slice.len];
     }
