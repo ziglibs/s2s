@@ -6,6 +6,7 @@
     .minimum_zig_version = "0.15.0",
     .paths = .{
         "build.zig",
+        "build.zig.zon",
         "s2s.zig",
     },
 }
