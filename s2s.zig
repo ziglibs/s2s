@@ -111,8 +111,8 @@ fn serializeRecursive(stream: *std.Io.Writer, comptime T: type, value: T) std.Io
             // we can safely ignore the struct layout here as we will serialize the data by field order,
             // instead of memory representation
 
-            inline for (str.fields) |fld| {
-                try serializeRecursive(stream, fld.type, @field(value, fld.name));
+            inline for (str.field_names, str.field_types) |name, typ| {
+                try serializeRecursive(stream, typ, @field(value, name));
             }
         },
         .optional => |opt| {
@@ -146,7 +146,7 @@ fn serializeRecursive(stream: *std.Io.Writer, comptime T: type, value: T) std.Io
         },
         .@"enum" => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
-            try stream.writeInt(AlignedInt(Tag), @intFromEnum(value), .little);
+            try stream.writeInt(AlignedInt(Tag), @backingInt(value), .little);
         },
         .@"union" => |un| {
             const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
@@ -155,9 +155,9 @@ fn serializeRecursive(stream: *std.Io.Writer, comptime T: type, value: T) std.Io
 
             try serializeRecursive(stream, Tag, active_tag);
 
-            inline for (std.meta.fields(T)) |fld| {
-                if (@field(Tag, fld.name) == active_tag) {
-                    try serializeRecursive(stream, fld.type, @field(value, fld.name));
+            inline for (un.field_names, un.field_types) |name, typ| {
+                if (@field(Tag, name) == active_tag) {
+                    try serializeRecursive(stream, typ, @field(value, name));
                 }
             }
         },
@@ -178,6 +178,7 @@ fn serializeRecursive(stream: *std.Io.Writer, comptime T: type, value: T) std.Io
         .frame,
         .@"anyframe",
         .enum_literal,
+        .spirv,
         => unreachable,
     }
 }
@@ -272,8 +273,8 @@ fn recursiveDeserialize(
             // we can safely ignore the struct layout here as we will serialize the data by field order,
             // instead of memory representation
 
-            inline for (str.fields) |fld| {
-                try recursiveDeserialize(stream, fld.type, allocator, &@field(target.*, fld.name));
+            inline for (str.field_names, str.field_types) |name, typ| {
+                try recursiveDeserialize(stream, typ, allocator, &@field(target.*, name));
             }
         },
         .optional => |opt| {
@@ -312,11 +313,10 @@ fn recursiveDeserialize(
         .@"enum" => |list| {
             const Tag = if (list.tag_type == usize) u64 else list.tag_type;
             const tag_value: Tag = @truncate(try stream.takeInt(AlignedInt(Tag), .little));
-            if (list.is_exhaustive) {
-                target.* = std.enums.fromInt(T, tag_value) orelse return error.UnexpectedData;
-            } else {
-                target.* = @enumFromInt(tag_value);
-            }
+            target.* = switch (list.mode) {
+                .exhaustive => std.enums.fromInt(T, tag_value) orelse return error.UnexpectedData,
+                .nonexhaustive => @fromBackingInt(tag_value),
+            };
         },
         .@"union" => |un| {
             const Tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
@@ -324,11 +324,11 @@ fn recursiveDeserialize(
             var active_tag: Tag = undefined;
             try recursiveDeserialize(stream, Tag, allocator, &active_tag);
 
-            inline for (std.meta.fields(T)) |fld| {
-                if (@field(Tag, fld.name) == active_tag) {
-                    var union_value: fld.type = undefined;
-                    try recursiveDeserialize(stream, fld.type, allocator, &union_value);
-                    target.* = @unionInit(T, fld.name, union_value);
+            inline for (un.field_names, un.field_types) |name, typ| {
+                if (@field(Tag, name) == active_tag) {
+                    var union_value: typ = undefined;
+                    try recursiveDeserialize(stream, typ, allocator, &union_value);
+                    target.* = @unionInit(T, name, union_value);
                     return;
                 }
             }
@@ -353,6 +353,7 @@ fn recursiveDeserialize(
         .frame,
         .@"anyframe",
         .enum_literal,
+        .spirv,
         => unreachable,
     }
 }
@@ -398,8 +399,8 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
             // we can safely ignore the struct layout here as we will serialize the data by field order,
             // instead of memory representation
 
-            inline for (str.fields) |fld| {
-                recursiveFree(allocator, fld.type, &@field(value.*, fld.name));
+            inline for (str.field_names, str.field_types) |name, typ| {
+                recursiveFree(allocator, typ, &@field(value.*, name));
             }
         },
         .optional => |opt| {
@@ -419,9 +420,9 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
 
             const active_tag: Tag = value.*;
 
-            inline for (std.meta.fields(T)) |fld| {
-                if (@field(Tag, fld.name) == active_tag) {
-                    recursiveFree(allocator, fld.type, &@field(value.*, fld.name));
+            inline for (un.field_names, un.field_types) |name, typ| {
+                if (@field(Tag, name) == active_tag) {
+                    recursiveFree(allocator, typ, &@field(value.*, name));
                     return;
                 }
             }
@@ -445,6 +446,7 @@ fn recursiveFree(allocator: std.mem.Allocator, comptime T: type, value: *T) void
         .frame,
         .@"anyframe",
         .enum_literal,
+        .spirv,
         => unreachable,
     }
 }
@@ -454,8 +456,8 @@ fn requiresAllocationForDeserialize(comptime T: type) bool {
     switch (@typeInfo(T)) {
         .pointer => return true,
         .@"struct", .@"union" => {
-            inline for (comptime std.meta.fields(T)) |fld| {
-                if (requiresAllocationForDeserialize(fld.type)) {
+            inline for (comptime std.meta.fieldTypes(T)) |typ| {
+                if (requiresAllocationForDeserialize(typ)) {
                     return true;
                 }
             }
@@ -487,12 +489,12 @@ fn computeTypeHash(comptime T: type) [8]u8 {
 }
 fn getSortedErrorNames(comptime T: type) []const []const u8 {
     comptime {
-        const error_set = @typeInfo(T).error_set orelse @compileError("Cannot serialize anyerror");
+        const error_names = @typeInfo(T).error_set.error_names orelse @compileError("Cannot serialize anyerror");
 
         const sorted_names = blk: {
-            var names: [error_set.len][]const u8 = undefined;
-            for (error_set, 0..) |err, i| {
-                names[i] = err.name;
+            var names: [error_names.len][]const u8 = undefined;
+            for (error_names, 0..) |name, i| {
+                names[i] = name;
             }
 
             std.mem.sortUnstable([]const u8, &names, {}, struct {
@@ -513,9 +515,9 @@ fn getSortedEnumNames(comptime T: type) []const []const u8 {
         const type_info = @typeInfo(T).@"enum";
 
         const sorted_names = blk: {
-            var names: [type_info.fields.len][]const u8 = undefined;
-            for (type_info.fields, 0..) |err, i| {
-                names[i] = err.name;
+            var names: [type_info.field_names.len][]const u8 = undefined;
+            for (type_info.field_names, 0..) |name, i| {
+                names[i] = name;
             }
 
             std.mem.sortUnstable([]const u8, &names, {}, struct {
@@ -550,7 +552,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             }
         },
         .pointer => |ptr| {
-            if (ptr.is_volatile) @compileError("Serializing volatile pointers is most likely a mistake.");
+            if (ptr.attrs.@"volatile") @compileError("Serializing volatile pointers is most likely a mistake.");
             if (ptr.sentinel() != null) @compileError("Sentinels are not supported yet!");
             switch (ptr.size) {
                 .one => {
@@ -578,9 +580,9 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
             // added as information
             hasher.update("struct");
 
-            for (str.fields) |fld| {
-                if (fld.is_comptime) @compileError("comptime fields are not supported.");
-                computeTypeHashInternal(hasher, fld.type);
+            for (str.field_types, str.field_attrs) |typ, attr| {
+                if (attr.@"comptime") @compileError("comptime fields are not supported.");
+                computeTypeHashInternal(hasher, typ);
             }
         },
         .optional => |opt| {
@@ -609,28 +611,31 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
                 i64
             else
                 list.tag_type;
-            if (list.is_exhaustive) {
-                // Exhaustive enums only allow certain values, so we
-                // tag them via the value type
-                hasher.update("enum.exhaustive");
-                computeTypeHashInternal(hasher, Tag);
-                const names = getSortedEnumNames(T);
-                inline for (names) |name| {
-                    hasher.update(name);
-                    hasher.update(&intToLittleEndianBytes(@as(Tag, @intFromEnum(@field(T, name)))));
-                }
-            } else {
-                // Non-exhaustive enums are basically integers. Treat them as such.
-                hasher.update("enum.non-exhaustive");
-                computeTypeHashInternal(hasher, Tag);
+            switch (list.mode) {
+                .exhaustive => {
+                    // Exhaustive enums only allow certain values, so we
+                    // tag them via the value type
+                    hasher.update("enum.exhaustive");
+                    computeTypeHashInternal(hasher, Tag);
+                    const names = getSortedEnumNames(T);
+                    inline for (names) |name| {
+                        hasher.update(name);
+                        hasher.update(&intToLittleEndianBytes(@as(Tag, @backingInt(@field(T, name)))));
+                    }
+                },
+                .nonexhaustive => {
+                    // Non-exhaustive enums are basically integers. Treat them as such.
+                    hasher.update("enum.non-exhaustive");
+                    computeTypeHashInternal(hasher, Tag);
+                },
             }
         },
         .@"union" => |un| {
             const tag = un.tag_type orelse @compileError("Untagged unions are not supported!");
             hasher.update("union");
             computeTypeHashInternal(hasher, tag);
-            for (un.fields) |fld| {
-                computeTypeHashInternal(hasher, fld.type);
+            for (un.field_types) |typ| {
+                computeTypeHashInternal(hasher, typ);
             }
         },
         .vector => |vec| {
@@ -651,6 +656,7 @@ fn computeTypeHashInternal(hasher: *TypeHashFn, comptime T: type) void {
         .frame,
         .@"anyframe",
         .enum_literal,
+        .spirv,
         => @compileError("Unsupported type " ++ @typeName(T)),
     }
 }
@@ -752,7 +758,7 @@ test "serialize basics" {
     try testSerialize(TestEnum, .a);
     try testSerialize(TestEnum, .b);
     try testSerialize(TestEnum, .c);
-    try testSerialize(TestEnum, @as(TestEnum, @enumFromInt(0xB1)));
+    try testSerialize(TestEnum, @as(TestEnum, @fromBackingInt(0xB1)));
 
     if (enable_failing_test) {
         try testSerialize(struct { val: error{ Foo, Bar } }, .{ .val = error.Foo });
@@ -849,7 +855,7 @@ test "ser/des" {
     try testSerDesAlloc(TestEnum, .a);
     try testSerDesAlloc(TestEnum, .b);
     try testSerDesAlloc(TestEnum, .c);
-    try testSerDesAlloc(TestEnum, @as(TestEnum, @enumFromInt(0xB1)));
+    try testSerDesAlloc(TestEnum, @as(TestEnum, @fromBackingInt(0xB1)));
 
     if (enable_failing_test) {
         try testSerDesAlloc(struct { val: error{ Foo, Bar } }, .{ .val = error.Foo });
