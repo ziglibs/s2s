@@ -19,6 +19,7 @@ A Zig binary serialization format and library.
 - Opaque types
 - Function pointers
 - Frames
+- SPIR-V
 
 ## API
 
